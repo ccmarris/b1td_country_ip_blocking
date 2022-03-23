@@ -49,7 +49,7 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------
 """
-__version__ = '0.0.5'
+__version__ = '0.0.6'
 __author__ = 'Chris Marrison'
 __author_email__ = 'chris@infoblox.com'
 
@@ -59,6 +59,8 @@ import os
 import shutil
 import logging
 import argparse
+import ipaddress
+import json
 
 # ** Global Variables **
 log = logging.getLogger(__name__)
@@ -83,6 +85,10 @@ def parseargs():
                        help="Overide Config file")
     parse.add_argument('-C', '--countries', type=str,
                        help="Country or list of comma delimited countries")
+    parse.add_argument('-a', '--append', action='store_true',
+                       help="Append data to existing custom list")
+    parse.add_argument('-p', '--policy', type=str,
+                       help="Name of security policy to add custom list")
     parse.add_argument('-d', '--debug', action='store_true',
                        help="Enable debug messages")
     group.add_argument('-l', '--custom_list', type=str,
@@ -287,12 +293,48 @@ def output_nios_csv(subnets,
     return
 
 
-def generate_custom_list(b1cfg, custom_list='', subnets=[], append=False):
+def process_subnets(subnets):
+    '''
+    Process subnets to break subnets larger than /24 in to /24s
+    This is due to custom_list subnet limitations
+
+    Parameters:
+        subnets (list): list of country_ips
+    
+    Returns:
+        list of subnets [ {"item": "<subnet>", "description": "<isocode>"} ]
+    '''
+    items_described = []
+
+    logging.info('Processing subnets')
+    for subnet in subnets:
+        net = ipaddress.ip_network(subnet.get('cidr'))
+        country = subnet.get('country')
+        if net.version == 4:
+            if net.prefixlen >= 24:
+                # Use as is
+                items_described.append({ "item": net.compressed, 
+                                         "description": country })
+            else:
+                # Break in to /24s
+                new_subnets = list(net.subnets(new_prefix=24))
+                for net in new_subnets:
+                    items_described.append({ "item": net.compressed, 
+                                            "description": country })
+        else:
+            # Assume IPv6 and use as is
+            items_described.append({ "item": net.compressed, 
+                                     "description": country })
+    
+    return items_described
+
+
+def generate_custom_list(b1tdc, custom_list='', subnets=[], append=False):
     '''
     Create BloxOne custom liss
 
     Parameters:
-        b1cfg (obj): bloxone.b1cfg() class object
+        b1tdc (obj): bloxone.b1tdc object class
         subnets (list): list of subnets
         custom_list (str): name of custom list
         append (bool): If list exists append data or not
@@ -302,14 +344,12 @@ def generate_custom_list(b1cfg, custom_list='', subnets=[], append=False):
     '''
     status = False
     nets = []
-    b1tdc = bloxone.b1tdc(b1cfg)
-    for subnet in subnets:
-        cidr = subnet.get('cidr')
-        country = subnet.get('country')
-        nets.append({ "description": country, "item": cidr })
+    # Process subnets and create format for items_described
+    nets = process_subnets(subnets)
 
     id = b1tdc.get_custom_list(name=custom_list)
     if not id:
+        logging.info('Creating custom list.')
         response = b1tdc.create_custom_list(name=custom_list, 
                                             items_described=nets)
         if response.status_code in b1tdc.return_codes_ok:
@@ -321,18 +361,66 @@ def generate_custom_list(b1cfg, custom_list='', subnets=[], append=False):
             logging.error(f'Content: {response.text}')
     else:
         if append:
+            logging.info(f'Appending data to {custom_list}')
             response = b1tdc.add_items_to_custom_list(name=custom_list, 
                                                       items_described=nets)
             if response.status_code in b1tdc.return_codes_ok:
-                logging.info(f'Custom list {custom_list} appended.')
+                logging.info(f'Custom list: {custom_list} appended.')
                 status = True
             else:
                 logging.error(f'Failed to append Custom list: {custom_list}')
+                logging.error(f'HTTP Response Code: {response.status_code}')
+                logging.error(f'Content: {response.text}')
                 status = False
         else:
             logging.info(f'Custom list {custom_list} exists, please use ' +
                          f'--append if you wish to add to this list')
             status = False
+
+    return status
+
+
+def apply_custom_list(b1tdc, policy, custom_list):
+    '''
+    Add custom list to security policy
+
+    Parameters:
+        b1tdc (obj): bloxone.b1tdc object class
+        policy (str): Name of security policy
+        custom_list (str): Name of custom list
+    
+    Returns:
+        Bool: True if successful
+    '''
+    status = False
+    policy_id = b1tdc.get_id('/security_policies', key='name', value=policy)
+    if policy_id:
+        logging.info(f'Retrieving security policy: {policy}')
+        response = b1tdc.get('/security_policies', id=policy_id)
+        if response.status_code in b1tdc.return_codes_ok:
+            policy_data = response.json()['results']
+            policy_data['rules'].append({ "action": "action_block",
+                                          "data": custom_list,
+                                          "type": "custom_list" })
+            # Update security policy
+            request = f'/security/policies/{policy_id}'
+            response = b1tdc.update(request, body=json.dumps(policy_data))
+            if response.status_code in b1tdc.return_codes_ok:
+                logging.info(f'Successfully updated security policy: {policy}')
+                status = True
+            else:
+                logging.error(f'Failed to update security policy: {policy}')
+                logging.error(f'HTTP Response Code: {response.status_code}')
+                logging.error(f'Content: {response.text}')
+                status = False
+        else:
+            logging.error(f'Failed to retrieve security policy: {policy}')
+            logging.error(f'HTTP Response Code: {response.status_code}')
+            logging.error(f'Content: {response.text}')
+            status = False
+    else:
+        logging.error(f'Security policy {policy} not found')
+        status = False
 
     return status
 
@@ -358,6 +446,8 @@ def main():
     csv = args.subnets
     nios = args.nios
     custom_list = args.custom_list
+    policy = args.policy
+    append = args.append
 
     # Initialise bloxone
     b1td = bloxone.b1td(configfile)
@@ -378,7 +468,15 @@ def main():
     if nios:
         output_nios_csv(subnets, outfile=outfile)
     if custom_list:
-        generate_custom_list(configfile, subnets, custom_list)
+        b1tdc = bloxone.b1tdc(configfile)
+        if generate_custom_list(b1tdc, 
+                             custom_list=custom_list,
+                             subnets = subnets,
+                             append=append):
+            if policy:
+                apply_custom_list(policy, custom_list)
+        else:
+            exitcode = 1
 
     return exitcode
 
