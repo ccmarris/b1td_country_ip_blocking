@@ -19,7 +19,7 @@
 
  Author: Chris Marrison
 
- Date Last Updated: 20220314
+ Date Last Updated: 20220322
 
 Copyright 2022 Chris Marrison / Infoblox
 
@@ -49,10 +49,11 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------
 """
-__version__ = '0.1'
+__version__ = '0.0.5'
 __author__ = 'Chris Marrison'
 __author_email__ = 'chris@infoblox.com'
 
+from distutils.sysconfig import customize_compiler
 import bloxone
 import os
 import shutil
@@ -75,7 +76,7 @@ def parseargs():
         Returns parsed arguments
     '''
     parse = argparse.ArgumentParser(description='B1TD Country IPs')
-    group = parse.add_mutually_exclusive_group()
+    group = parse.add_mutually_exclusive_group(required=True)
     parse.add_argument('-o', '--output', type=str,
                        help="Output to <filename>", default="")
     parse.add_argument('-c', '--config', type=str, default='bloxone.ini',
@@ -246,6 +247,96 @@ def output_csv(subnets, outfile=None):
     return
 
 
+def output_nios_csv(subnets, 
+                    zone='countryips.rpz.local', 
+                    view='default',
+                    outfile=None):
+    '''
+    Create CSV in NIOS RPZ Import format
+
+    Parameters:
+        subnets (list): List of dict of subnets
+        zone (str): rpz zone name
+        rpz_parent (str): RPZ parent zone
+
+    '''
+    reverse_labels= bloxone.utils.reverse_labels(zone)
+
+    # Print CSV Header
+    if outfile:
+        print('header-responsepolicycnamerecord,fqdn*,_new_fqdn,canonical_name,' +
+              'comment,disabled,parent_zone,ttl,view', file=outfile)
+    else:
+        print('header-responsepolicycnamerecord,fqdn*,_new_fqdn,canonical_name,' +
+              'comment,disabled,parent_zone,ttl,view')
+
+    # Process subnets and generate CSV lines
+    for subnet in subnets:
+        cidr = subnet.get('cidr')
+        country = subnet.get('country')
+        cidr = bloxone.utils.reverse_labels(cidr.replace('/', '.'))
+
+        line = ( f'responsepolicycnamerecord,{cidr}.{zone},,,Country: {country},False,' +
+                 f'{reverse_labels},,{view}' )
+        
+        if outfile:
+            print(line, file=outfile)
+        else:
+            print(line)
+
+    return
+
+
+def generate_custom_list(b1cfg, custom_list='', subnets=[], append=False):
+    '''
+    Create BloxOne custom liss
+
+    Parameters:
+        b1cfg (obj): bloxone.b1cfg() class object
+        subnets (list): list of subnets
+        custom_list (str): name of custom list
+        append (bool): If list exists append data or not
+    
+    Returns:
+        Bool: True if custom list successfully created/appended
+    '''
+    status = False
+    nets = []
+    b1tdc = bloxone.b1tdc(b1cfg)
+    for subnet in subnets:
+        cidr = subnet.get('cidr')
+        country = subnet.get('country')
+        nets.append({ "description": country, "item": cidr })
+
+    id = b1tdc.get_custom_list(name=custom_list)
+    if not id:
+        response = b1tdc.create_custom_list(name=custom_list, 
+                                            items_described=nets)
+        if response.status_code in b1tdc.return_codes_ok:
+            logging.info(f'Successfully created custom list: {custom_list}')
+            status = True
+        else:
+            logging.error(f'Failed to create custom list: {custom_list}')
+            logging.error(f'HTTP Response Code: {response.status_code}')
+            logging.error(f'Content: {response.text}')
+    else:
+        if append:
+            response = b1tdc.add_items_to_custom_list(name=custom_list, 
+                                                      items_described=nets)
+            if response.status_code in b1tdc.return_codes_ok:
+                logging.info(f'Custom list {custom_list} appended.')
+                status = True
+            else:
+                logging.error(f'Failed to append Custom list: {custom_list}')
+                status = False
+        else:
+            logging.info(f'Custom list {custom_list} exists, please use ' +
+                         f'--append if you wish to add to this list')
+            status = False
+
+    return status
+
+
 def main():
     '''
     * Main *
@@ -265,6 +356,8 @@ def main():
     outputfile = args.output
     countries = parse_countries(args.countries)
     csv = args.subnets
+    nios = args.nios
+    custom_list = args.custom_list
 
     # Initialise bloxone
     b1td = bloxone.b1td(configfile)
@@ -279,8 +372,13 @@ def main():
 
     subnets = get_subnets(b1td, countries)
 
+    # Parse args ensures one of these is set
     if csv:
         output_csv(subnets, outfile=outfile)
+    if nios:
+        output_nios_csv(subnets, outfile=outfile)
+    if custom_list:
+        generate_custom_list(configfile, subnets, custom_list)
 
     return exitcode
 
