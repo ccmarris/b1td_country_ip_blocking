@@ -49,11 +49,10 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------
 """
-__version__ = '0.1.1'
+__version__ = '0.1.3'
 __author__ = 'Chris Marrison'
 __author_email__ = 'chris@infoblox.com'
 
-from distutils.sysconfig import customize_compiler
 import bloxone
 import os
 import shutil
@@ -61,6 +60,7 @@ import logging
 import argparse
 import ipaddress
 import json
+import pkg_resources
 
 # ** Global Variables **
 log = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ def parseargs():
     # parse.add_argument('-a', '--append', action='store_true',
                        # help="Append data to existing custom list")
     parse.add_argument('-p', '--policy', type=str,
-                       help="Name of security policy to add custom list")
+                       help="Name of security policy to add custom lists")
     parse.add_argument('-d', '--debug', action='store_true',
                        help="Enable debug messages")
     group.add_argument('-l', '--custom_list', type=str,
@@ -96,7 +96,7 @@ def parseargs():
     group.add_argument('-n', '--nios', action='store_true',
                        help="NIOS RPZ CSV Output")
     group.add_argument('-s', '--subnets', action='store_true',
-                       help="Output CIDR subnets")
+                       help="Output CIDR subnets in simple CSV")
 
     return parse.parse_args()
 
@@ -189,10 +189,12 @@ def get_subnets(b1td, countries):
         subnets (list): List of dict {cidr, country}
     '''
     subnets = []
+    logging.info('Retrieving county_ips')
     for country in countries:
         try:
             response = b1td.get_country_ips(country)
             if response.status_code in b1td.return_codes_ok:
+                logging.info(f'Retrieved IPs for {country}')
                 subnets += response.json().get('country_ip')
             else:
                 logging.error(f'API error: {response.status_code} - ' +
@@ -340,7 +342,7 @@ def generate_custom_lists(b1tdc, base_name='', subnets=[], append=False):
         append (bool): If list exists append data or not
     
     Returns:
-        Bool: True if custom list successfully created/appended
+        custom_lists (list): List containing custom list names created
     '''
     custom_lists = []
     failed_lists = []
@@ -363,7 +365,6 @@ def generate_custom_lists(b1tdc, base_name='', subnets=[], append=False):
     logging.info(f'Creating {no_of_lists} custom lists - base name {base_name}')
     if no_of_lists == 1:
         if create_list(b1tdc, custom_list=base_name, item_list=nets):
-            logging.info(f'Created {no_of_lists} for {item_count} subnets.')
             custom_lists.append(base_name)
         else:
             logging.info(f'Failed to create custom list.')
@@ -385,7 +386,6 @@ def generate_custom_lists(b1tdc, base_name='', subnets=[], append=False):
                 failed_lists.append(custom_list)
 
             offset += max_items
-
 
     # Log summary
     no_created = len(custom_lists)
@@ -455,8 +455,10 @@ def apply_custom_list(b1tdc, policy='', custom_lists=[]):
                                             "data": custom_list,
                                             "type": "custom_list" })
             # Update security policy
-            request = f'/security/policies/{policy_id}'
-            response = b1tdc.update(request, body=json.dumps(policy_data))
+            logging.info(f'Updating policy: {policy} with id {policy_id}')
+            response = b1tdc.put('/security_policies', 
+                                 id=policy_id,
+                                 body=json.dumps(policy_data))
             if response.status_code in b1tdc.return_codes_ok:
                 logging.info(f'Successfully updated security policy: {policy}')
                 status = True
@@ -526,7 +528,7 @@ def main():
                                             subnets = subnets)
         if custom_lists:
             if policy:
-                apply_custom_list(b1td, policy, custom_lists)
+                apply_custom_list(b1tdc, policy, custom_lists)
         else:
             exitcode = 1
 
@@ -535,7 +537,16 @@ def main():
 
 # ** Main **
 if __name__ == '__main__':
-    exitcode = main()
+    # Check bloxone module version
+    b1_version = pkg_resources.get_distribution('bloxone').version
+    b1_version = pkg_resources.parse_version(b1_version)
+    required_version = pkg_resources.parse_version('0.8.10')
+    if b1_version >= required_version:
+        exitcode = main()
+    else:
+        logging.error(f'Requires bloxone module >=0.8.11 ' +
+                      f'version {b1_version} installed')
+        exitcode = 1
     raise SystemExit(exitcode)
 
 # ** End Main **
