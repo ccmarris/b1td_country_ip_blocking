@@ -8,18 +8,18 @@
   within your security ecosystem. This script can produce:
     1. A list of CIDR notation IP subnets associated with a country or 
        countries
-    2. Create a custom list in BloxOne to apply to a security policy
+    2. Create custom lists in BloxOne to apply to a security policy
     3. Create a NIOS RPZ CSV file for import in to NIOS
 
  Requirements:
-  Requires bloxone >= 0.8.8
+  Requires bloxone >= 0.8.10
 
  Usage:
     Use b1td_country_ip_blocking.py --help for details on options
 
  Author: Chris Marrison
 
- Date Last Updated: 20220322
+ Date Last Updated: 20220324
 
 Copyright 2022 Chris Marrison / Infoblox
 
@@ -49,7 +49,7 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------
 """
-__version__ = '0.0.6'
+__version__ = '0.1.0'
 __author__ = 'Chris Marrison'
 __author_email__ = 'chris@infoblox.com'
 
@@ -85,14 +85,14 @@ def parseargs():
                        help="Overide Config file")
     parse.add_argument('-C', '--countries', type=str,
                        help="Country or list of comma delimited countries")
-    parse.add_argument('-a', '--append', action='store_true',
-                       help="Append data to existing custom list")
+    # parse.add_argument('-a', '--append', action='store_true',
+                       # help="Append data to existing custom list")
     parse.add_argument('-p', '--policy', type=str,
                        help="Name of security policy to add custom list")
     parse.add_argument('-d', '--debug', action='store_true',
                        help="Enable debug messages")
     group.add_argument('-l', '--custom_list', type=str,
-                       help="Name of custom list to create in BloxOne TD")
+                       help="Base name for custom lists in BloxOne TD")
     group.add_argument('-n', '--nios', action='store_true',
                        help="NIOS RPZ CSV Output")
     group.add_argument('-s', '--subnets', action='store_true',
@@ -329,29 +329,92 @@ def process_subnets(subnets):
     return items_described
 
 
-def generate_custom_list(b1tdc, custom_list='', subnets=[], append=False):
+def generate_custom_lists(b1tdc, base_name='', subnets=[], append=False):
     '''
     Create BloxOne custom liss
 
     Parameters:
         b1tdc (obj): bloxone.b1tdc object class
+        base_name (str): base name of custom lists
         subnets (list): list of subnets
-        custom_list (str): name of custom list
         append (bool): If list exists append data or not
     
     Returns:
         Bool: True if custom list successfully created/appended
     '''
-    status = False
+    custom_lists = []
+    failed_lists = []
     nets = []
+    no_of_lists = 1
+    item_count = 0
+    max_items = 50000
+
     # Process subnets and create format for items_described
     nets = process_subnets(subnets)
+    item_count = len(nets)
+    # Check number of items (limit of 50000 per custom list)
+    if item_count > max_items:
+        no_of_lists = (item_count // max_items)
+        if (item_count % max_items) != 0:
+            no_of_lists += 1
+    else:
+        no_of_lists = 1
+    
+    logging.info(f'Creating {no_of_lists} custom lists - base name {base_name}')
+    if no_of_lists == 1:
+        if create_list(b1tdc, custom_list=base_name, item_list=nets):
+            logging.info(f'Created {no_of_lists} for {item_count} subnets.')
+            custom_lists.append(base_name)
+        else:
+            logging.info(f'Failed to create custom list.')
+            failed_lists.append(base_name)
+    else:
+        offset = 0
+        items = max_items
+        for n in range(no_of_lists):
+            custom_list = f'{base_name}-{n}'
+            if (n + 1) == no_of_lists:
+                items = item_count % max_items
+            end = offset + items
+            items_list = nets[offset:end]
+            if create_list(b1tdc, 
+                           custom_list=custom_list, 
+                           item_list=items_list):
+                custom_lists.append(custom_list)
+            else:
+                failed_lists.append(custom_list)
 
+            offset += max_items
+
+
+    # Log summary
+    no_created = len(custom_lists)
+    logging.info(f'Created {no_created} for {item_count} subnets.')
+    if failed_lists:
+        logging.error(f'Failed to create {len(failed_lists)}')
+    
+    return custom_lists
+
+
+def create_list(b1tdc, custom_list='', item_list=[]):
+    '''
+    Create custom list
+
+    Parameters:
+        b1tdc (obj): bloxone.b1tdc object class
+        custom_list (str): name of custom list
+        item_list (list): items_described structure
+    
+    Returns:
+        status (bool): True if successful
+
+    '''
+    status = False
     id = b1tdc.get_custom_list(name=custom_list)
     if not id:
-        logging.info('Creating custom list.')
+        logging.info(f'Creating custom list {custom_list} for {len(item_list)} items.')
         response = b1tdc.create_custom_list(name=custom_list, 
-                                            items_described=nets)
+                                            items_described=item_list)
         if response.status_code in b1tdc.return_codes_ok:
             logging.info(f'Successfully created custom list: {custom_list}')
             status = True
@@ -359,28 +422,15 @@ def generate_custom_list(b1tdc, custom_list='', subnets=[], append=False):
             logging.error(f'Failed to create custom list: {custom_list}')
             logging.error(f'HTTP Response Code: {response.status_code}')
             logging.error(f'Content: {response.text}')
-    else:
-        if append:
-            logging.info(f'Appending data to {custom_list}')
-            response = b1tdc.add_items_to_custom_list(name=custom_list, 
-                                                      items_described=nets)
-            if response.status_code in b1tdc.return_codes_ok:
-                logging.info(f'Custom list: {custom_list} appended.')
-                status = True
-            else:
-                logging.error(f'Failed to append Custom list: {custom_list}')
-                logging.error(f'HTTP Response Code: {response.status_code}')
-                logging.error(f'Content: {response.text}')
-                status = False
-        else:
-            logging.info(f'Custom list {custom_list} exists, please use ' +
-                         f'--append if you wish to add to this list')
             status = False
+    else:
+        logging.warning(f'Custom list {custom_list} exists')
+        status = False
 
     return status
 
 
-def apply_custom_list(b1tdc, policy, custom_list):
+def apply_custom_list(b1tdc, policy, custom_lists):
     '''
     Add custom list to security policy
 
@@ -399,9 +449,11 @@ def apply_custom_list(b1tdc, policy, custom_list):
         response = b1tdc.get('/security_policies', id=policy_id)
         if response.status_code in b1tdc.return_codes_ok:
             policy_data = response.json()['results']
-            policy_data['rules'].append({ "action": "action_block",
-                                          "data": custom_list,
-                                          "type": "custom_list" })
+            # Build rules for custom lists
+            for custom_list in custom_lists:
+                policy_data['rules'].append({ "action": "action_block",
+                                            "data": custom_list,
+                                            "type": "custom_list" })
             # Update security policy
             request = f'/security/policies/{policy_id}'
             response = b1tdc.update(request, body=json.dumps(policy_data))
@@ -447,7 +499,7 @@ def main():
     nios = args.nios
     custom_list = args.custom_list
     policy = args.policy
-    append = args.append
+    # append = args.append
 
     # Initialise bloxone
     b1td = bloxone.b1td(configfile)
@@ -469,12 +521,12 @@ def main():
         output_nios_csv(subnets, outfile=outfile)
     if custom_list:
         b1tdc = bloxone.b1tdc(configfile)
-        if generate_custom_list(b1tdc, 
-                             custom_list=custom_list,
-                             subnets = subnets,
-                             append=append):
+        custom_lists = generate_custom_lists(b1tdc, 
+                                            base_name=custom_list,
+                                            subnets = subnets)
+        if custom_lists:
             if policy:
-                apply_custom_list(policy, custom_list)
+                apply_custom_list(policy, custom_lists)
         else:
             exitcode = 1
 
