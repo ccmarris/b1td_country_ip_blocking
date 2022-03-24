@@ -49,7 +49,7 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------
 """
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 __author__ = 'Chris Marrison'
 __author_email__ = 'chris@infoblox.com'
 
@@ -430,7 +430,7 @@ def create_list(b1tdc, custom_list='', item_list=[]):
     return status
 
 
-def apply_custom_list(b1tdc, policy, custom_lists):
+def apply_custom_list(b1tdc, policy='', custom_lists=[]):
     '''
     Add custom list to security policy
 
@@ -526,7 +526,7 @@ def main():
                                             subnets = subnets)
         if custom_lists:
             if policy:
-                apply_custom_list(policy, custom_lists)
+                apply_custom_list(b1td, policy, custom_lists)
         else:
             exitcode = 1
 
