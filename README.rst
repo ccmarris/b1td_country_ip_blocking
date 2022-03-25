@@ -1,110 +1,225 @@
-******************************************************
-Documentation is in progress - this is just a template
-******************************************************
+=========================
+BloxOne Block Country IPs
+=========================
 
-*****************
-Quick Start Guide
-*****************
+| Version: 0.1.3
+| Author: Chris Marrison
+| Email: chris@infoblox.com
+
+Description
+-----------
+
+This script is designed to provide a quick way to access the Country IP data
+that is available in BloxOne Threat Defense and use this to perform one of 
+the following:
+
+  - Create custom lists and apply these to a BloxOne Threat Defense security
+    policy
+  - Output to a NIOS RPZ CSV import format
+  - Output to a simple CSV for use with your security ecosystem
+
+
+Prerequisites
+-------------
+
+Python 3.7 or above
+bloxone module >= 0.8.10
+
+
+Installing Python
+~~~~~~~~~~~~~~~~~
+
+You can install the latest version of Python 3.x by downloading the appropriate
+installer for your system from `python.org <https://python.org>`_.
 
 .. note::
-  For full documentation, please see the docs directory.
 
-Requirements
-============
+  If you are running MacOS Catalina (or later) Python 3 comes pre-installed.
+  Previous versions only come with Python 2.x by default and you will therefore
+  need to install Python 3 as above or via Homebrew, Ports, etc.
 
-This script requires Python 3.x and utilises the :mod:'bloxone' python module. 
+  By default the python command points to Python 2.x, you can check this using 
+  the command::
 
-The :mod:'bloxone' module can be install using pip::
+    $ python -V
 
-  pip3 install bloxone
+  To specifically run Python 3, use the command::
+
+    $ python3
+
+
+.. important::
+
+  Mac users will need the xcode command line utilities installed to use pip3,
+  etc. If you need to install these use the command::
+
+    $ xcode-select --install
+
+.. note::
+
+  If you are installing Python on Windows, be sure to check the box to have 
+  Python added to your PATH if the installer offers such an option 
+  (it's normally off by default).
+
+
+Modules
+~~~~~~~
+
+Non-standard modules:
+
+    - bloxone 0.8.10+
+
+These are specified in the *requirements.txt* file.
+
+The latest version of the bloxone module is available on PyPI and can simply be
+installed using::
+
+    pip3 install bloxone --user
+
+To upgrade to the latest version::
+
+    pip3 install bloxone --user --upgrade
+
+Complete list of modules::
+
+    import bloxone
+    import os
+    import shutil
+    import logging
+    import argparse
+    import ipaddress
+    import json
+    import pkg_resources
+
+
+Installation
+------------
+
+The simplest way to install and maintain the tools is to clone this 
+repository::
+
+    % git clone https://github.com/ccmarris/b1td_country_ip_blocking
+
+
+Alternative you can download as a Zip file.
+
+
+Basic Configuration
+-------------------
+
+The script utilises a bloxone.ini file as used by the bloxone module.
+
+bloxone.ini
+~~~~~~~~~~~
+
+The *bloxone.ini* file is used by the bloxone module to access the bloxone
+API. A sample inifile for the bloxone module is shared as *bloxone.ini* and 
+follows the following format provided below::
+
+    [BloxOne]
+    url = 'https://csp.infoblox.com'
+    api_version = 'v1'
+    api_key = '<you API Key here>'
+
+Simply create and add your API Key, and this is ready for the bloxone
+module used by the automation demo script. This inifile should be kept 
+in a safe area of your filesystem. 
+
+Use the --config/-c option to specify the ini file.
 
 
 Usage
-=====
+-----
 
-The simplest place to start is to run the :mod:`b1td_tide_data_feed.py` Script
-with the -h or --help option to display the simple usage help text.::
+The b1td_country_ip_blocking.py uses TIDE as the source of the IP data. 
 
-  $ ./b1td_tide_data_feed.py --help
-  usage: b1td_tide_data_feed.py [-h] [-o OUTPUT] [-c CONFIG] 
-                          [-f FEEDTYPE] [-t THREATCLASS] [-T THREATPROPERTY]
-                          [-p PROFILE] [-r RLIMIT] [-i] [-d]
+The prime use of the data is to create appropriate Custom Lists within
+BloxOne Threat Defense Cloud and optionally automatically apply this to a 
+security policy.
 
-  Simple TIDE data feed example
+The data also be output to screen or file in either a simple CSV
+file format or NIOS CSV import format to create an RPZ for use elsewhere 
+in your security ecosystem.
 
-  optional arguments:
-    -h, --help            show this help message and exit
-    -o OUTPUT, --output OUTPUT
-                          Output to <filename>
-    -c CONFIG, --config CONFIG
-                          Overide Config file
-    -f FEEDTYPE, --feedtype FEEDTYPE
-                          Specify feed type <host(default), ip, url>
-    -t THREATCLASS, --threatclass THREATCLASS
-                          Specify Threat Class for feed
-    -T THREATPROPERTY, --threatproperty THREATPROPERTY
-                          Specify Threat Property for feed
-    -p PROFILE, --profile PROFILE
-                          Set profile for feed (default=IID)
-    -r RLIMIT, --rlimit RLIMIT
-                          Set limit for number of records (default=100)
-    -i, --iocsonly        Output IOCs only
-    -d, --debug           Enable debug messages
+This allows the script to be used for both demonstration purposes of the
+automation capabilities provide by the BloxOne APIs.
 
+The script supports -h or --help on the command line to access the options 
+available::
 
-Configuring the API Key
-========================
+    % ./b1td_country_ip_blocking.py --help
+    usage: b1td_country_ip_blocking.py [-h] [-o OUTPUT] [-c CONFIG] 
+    [-C COUNTRIES] [-p POLICY] [-d] (-l CUSTOM_LIST | -n | -s)
 
-Although the script will accept your API Key as part of the command line using
-the --apikey / -k option, :mod:`b1td_tide_data_feed` supports the use of a bloxone.ini file to store the API Key.
+    B1TD Country IPs
 
+    optional arguments:
+      -h, --help            show this help message and exit
+      -o OUTPUT, --output OUTPUT
+                            Output to <filename>
+      -c CONFIG, --config CONFIG
+                            Overide Config file
+      -C COUNTRIES, --countries COUNTRIES
+                            Country or list of comma delimited countries
+      -p POLICY, --policy POLICY
+                            Name of security policy to add custom lists
+      -d, --debug           Enable debug messages
+      -l CUSTOM_LIST, --custom_list CUSTOM_LIST
+                            Base name for custom lists in BloxOne TD
+      -n, --nios            NIOS RPZ CSV Output
+      -s, --subnets         Output CIDR subnets in simple CSV
+      
 .. note::
-  Using the --apikey/-k option overrides any API Key stored in
-  the ``bloxone.ini``
 
-By default :mod:`b1td_tide_data_feed` will look for a ``bloxone.ini`` file in the
-current working directory. An alternate ini file can be specified with the
-the --config/-c option. This allows you to call the script with alternative ini
-files as needed without the need to use the --apikey option to use alternate 
-authentication credentials.
+    Country used are for illustration purposes only.
 
-ini File Format
----------------
 
-A sample bloxone.ini file is included with this package, however, the simple
-format is shown below::
+Generate a simple CSV
+~~~~~~~~~~~~~~~~~~~~~
 
-  [BloxOne]
-  url = 'https://csp.infoblox.com'
-  api_version = 'v1'
-  api_key = '<you API Key here>'
-
-Add you API Key from the portal to the :data:`api_key` property and save the
-file. An example, using a fictious key is shown::
-
-  [BloxOne]
-  url = 'https://csp.infoblox.com'
-  api_version = 'v1'
-  api_key = c3042afe88ea9a1a24b8fb220e203343a1e4ee08d1c8a00331594c802ad50a4c
-
-Once this step is complete you will not have to use the --apikey / -k option
-unless you specifically want to override the configured key.
-
-Simple Examples
-===============
-
-Once the :data:`api_key` is defined in the bloxone.ini the script can be run without
-any options using the defaults, to generate 100 CSV lines of type HOST and using IID 
-as the profile displayed on screen.
+Use this to generate a CSV of format *subnet,country* this is a good test mode
+to ensure script is working as expected.
 
 ::
-  $ ./b1td_tide_data_feed.py
 
-This can easily be sent to a file using the --output <filename> option::
+    % ./b1td_country_ip_blocking.py -c <path to inifile> --countries Somalia --subnets
+    % ./b1td_country_ip_blocking.py -c <path to inifile> -C SO -s -o <filename>
+    
 
-  $ ./b1td_tide_data_feed.py --output mydatafeed.csv
+Generate NIOS RPZ CSV Import
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-It is also possible to output only the IOCs without the metadata using the 
---iocsonly option::
+Use this to generate a CSV Import file for NIOS RPZ::
 
-  $ ./b1td_tide_data_feed.py -c bloxone.ini --iocsonly --output mydatafeed.txt
+    % ./b1td_country_ip_blocking.py -c bloxone.ini -C Italy --nios
+
+
+Create a Custom List in BloxOne Threat Defense
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This mode will automatically create a custom list in BloxOne Threat Defense
+and optionally append this to the specified security policy. Custom lists
+only support /24 or smaller subnet definitions at this time and so the script
+automatically splits larger networks in to /24s. The script will automatically
+create the appropriate number of custom lists needed due to the 50,000 items
+per custom list and uses the base_name (-l/--custom_list) with a postfix of 
+the format -N where N is a counter starting from 0. If there are less than
+50k items then the base_name is used as is.
+
+Examples::
+
+  % ./b1td_country_ip_blocking.py -c bloxone.ini -C So -l mylist
+  % ./b1td_country_ip_blocking.py -c bloxone.ini -C So,Russia -l mylist -p mypolicy
+
+
+License
+-------
+
+This project, and the bloxone module are licensed under the 2-Clause BSD License
+- please see LICENSE file for details.
+
+
+Aknowledgements
+---------------
+
+Thanks to Tom Grimes for initial user testing.

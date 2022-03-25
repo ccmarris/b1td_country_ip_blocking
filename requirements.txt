@@ -1,1 +1,2 @@
 bloxone>=0.8.10
+pkg_resources
