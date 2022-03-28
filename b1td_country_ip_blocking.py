@@ -49,7 +49,7 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------
 """
-__version__ = '0.1.3'
+__version__ = '0.1.4'
 __author__ = 'Chris Marrison'
 __author_email__ = 'chris@infoblox.com'
 
@@ -189,7 +189,7 @@ def get_subnets(b1td, countries):
         subnets (list): List of dict {cidr, country}
     '''
     subnets = []
-    logging.info('Retrieving county_ips')
+    logging.info('Retrieving country_ips')
     for country in countries:
         try:
             response = b1td.get_country_ips(country)
